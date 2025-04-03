@@ -15,7 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 app = Flask(__name__)
 app.secret_key = "testingupdaterssdita"
 
-conn = MongoClient('mongodb+srv://widyandita:cheesetoast@cluster0.vdchw.mongodb.net/')
+conn = MongoClient('mongodb://localhost:27017')
 db = conn.get_database('test_data_berita')
 users_collection = db.test_users
 

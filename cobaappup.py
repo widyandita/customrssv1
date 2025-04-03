@@ -19,7 +19,7 @@ app.config['SERVER_NAME'] = '127.0.0.1:5000'
 app.config['APPLICATION_ROOT'] = '/'        
 app.config['PREFERRED_URL_SCHEME'] = 'http'
 
-conn = MongoClient('mongodb+srv://widyandita:cheesetoast@cluster0.vdchw.mongodb.net/')
+conn = MongoClient('mongodb://localhost:27017')
 db = conn.get_database('test_data_berita')
 users_collection = db.test_users2
 
