@@ -19,7 +19,7 @@ app = Flask(__name__)
 
 # Load environment variables (production values are provided via app.yaml)
 app.config['FLASK_ENV'] = os.getenv('FLASK_ENV', 'production')
-app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://widya-nandita-tugas-akhir.appspot.com')
+app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://widya-nandita-tugas-akhir.et.r.appspot.com')
 app.config['PREFERRED_URL_SCHEME'] = 'https'
 
 mongo_uri = os.getenv('MONGO_URI')
@@ -142,7 +142,7 @@ def update_rss_feed():
         now = datetime.utcnow()
         return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-    BASE_URL = "https://widya-nandita-tugas-akhir.appspot.com"
+    BASE_URL = "https://widya-nandita-tugas-akhir.et.r.appspot.com"
     users = users_collection.find()
     with app.app_context():
         for user in users:
