@@ -1,54 +1,95 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RSS Feed Generator</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f9f9f9;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            color: #333;
-        }
-        .container {
-            max-width: 800px;
-            background: #fff;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            text-align: center;
-        }
-        h1 {
-            color: #007BFF;
-        }
-        textarea {
-            width: 100%;
-            height: 50px;
-            margin-top: 10px;
-            font-size: 16px;
-            padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            resize: none;
-        }
-        p {
-            margin-top: 20px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Custom RSS Feed Generator</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      font-family: Arial, sans-serif;
+      background-color: #f9f9f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      max-width: 800px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+
+    h2 {
+      color: #333;
+      margin-bottom: 20px;
+    }
+
+    .rss-url-box {
+      background-color: #ffffff;
+      border: 2px solid #0078d7;
+      padding: 12px 20px;
+      border-radius: 8px;
+      color: #0078d7;
+      font-weight: bold;
+      font-family: monospace;
+      width: fit-content;
+      margin: 0 auto;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+      user-select: none;
+    }
+
+    .rss-url-box:hover {
+      background-color: #e6f0ff;
+    }
+
+    .tooltip {
+      color: green;
+      font-size: 14px;
+      margin-top: 10px;
+      animation: fadeIn 0.3s ease-in-out;
+      display: none;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Welcome to the Custom RSS News Feed Generator</h1>
-        <p>Your custom RSS News Feed URL:</p>
-        <textarea readonly>{{rss_url}}</textarea>
-        <p>Copy the above URL and use it in your RSS feed reader.</p>
+
+  <div class="container">
+    <h2>Welcome to the Custom RSS News Feed Generator</h2>
+    <p>Your Customized RSS Feed URL:</p>
+
+    <div class="rss-url-box" id="rssUrlBox" title="Click to copy">
+        {{rss_url}}
     </div>
+
+    <p>Click to copy the URL</p>
+
+    <div class="tooltip" id="tooltip">✅ Copied to clipboard!</div>
+  </div>
+
+  <script>
+    const rssUrlBox = document.getElementById('rssUrlBox');
+    const tooltip = document.getElementById('tooltip');
+
+    rssUrlBox.addEventListener('click', function () {
+      const text = rssUrlBox.textContent.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        tooltip.style.display = 'block';
+        setTimeout(() => tooltip.style.display = 'none', 1500);
+      });
+    });
+  </script>
+
 </body>
 </html>

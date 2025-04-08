@@ -297,8 +297,10 @@ def track():
     news_id = query_params.get("news_id", [None])[0]
 
     redirect_to = request.args.get("redirect", "true")  # Extract 'redirect' parameter
-    news_data = default_news_data().to_dict(orient="records")
-
+    news_data = first_news_data().to_dict(orient="records")
+    all_news_data = default_news_data().to_dict(orient="records")
+    news_data.extend(all_news_data)
+    
     # Validate parameters
     if redirect_to == "true" and news_id is not None:
         news_item = next((item for item in news_data if str(item["_id"]) == str(news_id)), None)
