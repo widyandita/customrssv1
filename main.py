@@ -22,10 +22,16 @@ app.config['FLASK_ENV'] = os.getenv('FLASK_ENV', 'production')
 app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://widya-nandita-tugas-akhir.et.r.appspot.com')
 app.config['PREFERRED_URL_SCHEME'] = 'https'
 
+BASE_URL = "https://widya-nandita-tugas-akhir.et.r.appspot.com"
+
 mongo_uri = os.getenv('MONGO_URI')
 conn = MongoClient(mongo_uri)
 db = conn.get_database('test_data_berita')
 users_collection = db.test_users2
+
+def rfc822_date():
+    now = datetime.utcnow()
+    return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 def default_news_data():
     collection_1 = db.test_berita1
@@ -42,26 +48,6 @@ def first_news_data():
     dfdata['_id'] = dfdata['_id'].astype(str)
 
     return dfdata
-
-def generate_recommendations(tracked_news_id):
-    df1 = default_news_data()
-    clicked_id = tracked_news_id
-    rec_num = 5
-
-    tfidf_matrix = TfidfVectorizer()
-    cleanedt = df1['Cleaned_Title'].values
-    clickedt = df1['Cleaned_Title'][df1['_id'] == clicked_id]
-    tfidf_matrix.fit(cleanedt)
-    tfidf_vector = tfidf_matrix.transform(cleanedt)
-    i_tfidf_vector = tfidf_matrix.transform(clickedt)
-
-    similarity = cosine_similarity(i_tfidf_vector, tfidf_vector)
-    rank = similarity.flatten().argsort()[::-1]
-    final_recommended_articles_index = [article_id for article_id in rank if article_id not in [0]][:rec_num]
-    filtereddf = df1.loc[final_recommended_articles_index]
-    recsids = filtereddf['_id'].values
-
-    return recsids    
 
 def generate_avg_recommendations(user_id):
     clicked_news = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
@@ -113,10 +99,95 @@ def generate_avg_recommendations(user_id):
 
     return recsids
 
+def generate_default_rss_feed(user_id, default_news):
+    # Begin manual RSS construction
+    rss = Element("rss", version="2.0")
+    channel = SubElement(rss, "channel")
+    title = SubElement(channel, "title")
+    title.text = f"RSS News Feed Yang Dikustomisasi Untuk User {user_id}"
+    link = SubElement(channel, "link")
+    #link.text = request.url_root
+    link.text = BASE_URL
+    language = SubElement(channel, "language")
+    language.text = "id"
+    generator = SubElement(channel, "generator")
+    generator.text = "Custom RSS Feed Generator with xml.etree.ElementTree"
+    copyright = SubElement(channel, "copyright")
+    copyright.text = "Copyright © 2025 CustomizedRSS. All rights reserved."
+    description = SubElement(channel, "description")
+    description.text = "Kumpulan berita terbaru dari berbagai situs berita Indonesia. Silahkan membaca beberapa berita untuk mendapatkan rekomendasi berita."
+    last_build_date = SubElement(channel, "lastBuildDate")
+    last_build_date.text = rfc822_date()
+
+    # Add items in the correct order
+    for news in default_news:
+        item = SubElement(channel, "item")
+        item_title = SubElement(item, "title")
+        item_title.text = news["Title"]
+        item_description = SubElement(item, "description")
+        item_description.text = news["Description"]
+        item_link = SubElement(item, "link")
+        item_link.text = url_for("track", user_id=user_id, news_id=news["_id"], redirect="true", _external=True)
+        item_guid = SubElement(item, "guid", attrib={"isPermaLink": "false"})
+        item_guid.text = item_link.text
+
+        pub_date_str = news["pub_date"]
+        
+        formatted_date = pub_date_str.strftime("%a, %d %b %Y %H:%M:%S +0000")
+        pubdate = SubElement(item, "pubDate")
+        pubdate.text = formatted_date
+
+    # Generate and prettify XML
+    rough_string = tostring(rss, "utf-8")
+    reparsed = minidom.parseString(rough_string)
+    pi = reparsed.createProcessingInstruction("xml-stylesheet", 'type="text/xsl" href="style.xsl"')
+    reparsed.insertBefore(pi, reparsed.firstChild)
+    pretty_rss_feed = reparsed.toprettyxml(indent="  ")
+
+    return pretty_rss_feed
+
 @app.route("/")
 def welcome():
     # Generate a new user ID
     user_id = str(uuid.uuid4())
+
+    # Fetch first news data and title from MongoDB
+    first_news_df = first_news_data()
+    filter_titles = first_news_df["Title"]
+
+    # Ensure pub_date is a datetime object and convert to dict
+    first_news_df["pub_date"] = pd.to_datetime(first_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    first_news_dict = first_news_df.to_dict(orient="records")
+
+    # Fetch all news data from MongoDB
+    all_news_df = default_news_data()
+    all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    news_dict = all_news_df.to_dict(orient="records")
+
+    # Sort DataFrame by pub_date in descending order and filter by 4 days
+    sorted_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
+    sorted_news_df["date_only"] = sorted_news_df["pub_date"].dt.date
+    recent_dates = sorted_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
+    sorted_news_df = sorted_news_df[sorted_news_df["date_only"].isin(recent_dates)]
+    sorted_news_df = sorted_news_df.to_dict(orient="records")
+
+    all_news_dict = {news["_id"]: news for news in news_dict}  # Map for quick lookup by ID
+
+    recommended_ids = []
+
+    # Arrange items based on recommendation order
+    ordered_news = [all_news_dict[news_id] for news_id in recommended_ids if news_id in all_news_dict]
+
+    first_news_dict.extend(ordered_news)
+
+    # Include any remaining items that weren't in the recommendations
+    remaining_news = [
+                    news for news in sorted_news_df
+                    if news["_id"] not in recommended_ids and news["Title"] not in filter_titles
+                ]
+    first_news_dict.extend(remaining_news)
+
+    pretty_rss_feed = generate_default_rss_feed(user_id, first_news_dict)
     
     # Store the user in the database
     users_collection.insert_one({
@@ -124,7 +195,8 @@ def welcome():
         "created_at": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
         "clicked_news": [],
         "last_recommendation_time": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        "recommendations": []
+        "recommendations": [],
+        "rss_feed": pretty_rss_feed
     })
     
     # Generate the RSS feed URL for the user
@@ -138,11 +210,6 @@ def welcome():
 
 @app.route("/updaterss", methods=["GET"])
 def update_rss_feed():
-    def rfc822_date():
-        now = datetime.utcnow()
-        return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
-
-    BASE_URL = "https://widya-nandita-tugas-akhir.et.r.appspot.com"
     users = users_collection.find()
     with app.app_context():
         for user in users:
@@ -200,52 +267,10 @@ def update_rss_feed():
                         ]
             first_news_dict.extend(remaining_news)
 
-            # Begin manual RSS construction
-            rss = Element("rss", version="2.0")
-            channel = SubElement(rss, "channel")
-            title = SubElement(channel, "title")
-            title.text = f"RSS News Feed Yang Dikustomisasi Untuk User {user_id}"
-            link = SubElement(channel, "link")
-            #link.text = request.url_root
-            link.text = BASE_URL
-            language = SubElement(channel, "language")
-            language.text = "id"
-            generator = SubElement(channel, "generator")
-            generator.text = "Custom RSS Feed Generator with xml.etree.ElementTree"
-            copyright = SubElement(channel, "copyright")
-            copyright.text = "Copyright © 2025 CustomizedRSS. All rights reserved."
-            description = SubElement(channel, "description")
-            description.text = "Kumpulan berita terbaru dari berbagai situs berita Indonesia. Silahkan membaca beberapa berita untuk mendapatkan rekomendasi berita."
-            last_build_date = SubElement(channel, "lastBuildDate")
-            last_build_date.text = rfc822_date()
-
-            # Add items in the correct order
-            for news in first_news_dict:
-                item = SubElement(channel, "item")
-                item_title = SubElement(item, "title")
-                item_title.text = news["Title"]
-                item_description = SubElement(item, "description")
-                item_description.text = news["Description"]
-                item_link = SubElement(item, "link")
-                item_link.text = url_for("track", user_id=user_id, news_id=news["_id"], redirect="true", _external=True)
-                item_guid = SubElement(item, "guid", attrib={"isPermaLink": "false"})
-                item_guid.text = item_link.text
-
-                pub_date_str = news["pub_date"]
-                
-                formatted_date = pub_date_str.strftime("%a, %d %b %Y %H:%M:%S +0000")
-                pubdate = SubElement(item, "pubDate")
-                pubdate.text = formatted_date
-
-            # Generate and prettify XML
-            rough_string = tostring(rss, "utf-8")
-            reparsed = minidom.parseString(rough_string)
-            pi = reparsed.createProcessingInstruction("xml-stylesheet", 'type="text/xsl" href="style.xsl"')
-            reparsed.insertBefore(pi, reparsed.firstChild)
-            pretty_rss_feed = reparsed.toprettyxml(indent="  ")
+            pretty_rss_feed = generate_default_rss_feed(user_id, first_news_dict)
 
             users_collection.update_one({"user_id": user_id}, {"$set": {"rss_feed": pretty_rss_feed}})
-    
+        
         return jsonify({"message": "RSS feeds updated for all users"})
 
 @app.route("/rss", methods=["GET"])
