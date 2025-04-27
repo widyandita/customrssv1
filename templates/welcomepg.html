@@ -5,91 +5,146 @@
   <title>Custom RSS Feed Generator</title>
   <style>
     body {
-      margin: 0;
-      padding: 0;
-      height: 100vh;
       font-family: Arial, sans-serif;
       background-color: #f9f9f9;
       display: flex;
-      align-items: center;
       justify-content: center;
+      align-items: center;
+      height: 100vh;
     }
 
     .container {
-      max-width: 800px;
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
       text-align: center;
-    }
-
-    h2 {
-      color: #333;
-      margin-bottom: 20px;
+      background-color: #fff;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 0 12px rgba(0,0,0,0.1);
+      width: 90%;
+      max-width: 600px;
     }
 
     .rss-url-box {
-      background-color: #ffffff;
-      border: 2px solid #0078d7;
+      background-color: #f0f0f0;
       padding: 12px 20px;
-      border-radius: 8px;
-      color: #0078d7;
-      font-weight: bold;
-      font-family: monospace;
-      width: fit-content;
-      margin: 0 auto;
+      margin: 15px 0;
+      border-radius: 6px;
       cursor: pointer;
-      transition: background-color 0.2s ease;
       user-select: none;
+      font-family: monospace;
+      word-wrap: break-word;
     }
 
     .rss-url-box:hover {
-      background-color: #e6f0ff;
+      background-color: #e0e0e0;
     }
 
     .tooltip {
-      color: green;
-      font-size: 14px;
-      margin-top: 10px;
-      animation: fadeIn 0.3s ease-in-out;
       display: none;
+      color: green;
+      margin-top: 8px;
     }
 
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
+    .radio-group {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px auto;
+    max-width: 650px;
+    text-align: left;
+    background-color: #fafafa;
+    }
+
+    .radio-group legend {
+    font-weight: bold;
+    font-size: 1rem;
+    padding: 0 8px;
+    color: #333;
+    }
+
+    .radio-option {
+    display: flex;
+    align-items: center;
+    margin: 12px 0;
+    font-size: 0.95rem;
+    cursor: pointer;
+    }
+
+    .radio-option input[type="radio"] {
+    margin-right: 10px;
+    transform: scale(1.2);
+    cursor: pointer;
+    }
+
+    .rss-url-container {
+    margin-top: 30px;
+    text-align: center;
+    }
+
+    .rss-url-container h3 {
+    margin-bottom: 10px;
+    font-size: 1.1rem;
+    color: #333;
+    }
+
+    .copy-hint {
+    display: block;
+    margin-top: 10px;
+    font-size: 0.9rem;
+    color: #555;
     }
   </style>
 </head>
 <body>
+    <div class="container">
+      <h2>Welcome to the Custom RSS News Feed Generator</h2>
 
-  <div class="container">
-    <h2>Welcome to the Custom RSS News Feed Generator</h2>
-    <p>Your Customized RSS Feed URL:</p>
+      <fieldset class="radio-group">
+        <legend>📰 Choose RSS Feed Order</legend>
+        <label class="radio-option">
+          <input type="radio" name="sort" value="true" checked>
+          <span>Sorted by <strong>Latest News</strong></span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="sort" value="false">
+          <span>Custom <strong>Recommendation Order</strong></span>
+        </label>
+      </fieldset>      
 
-    <div class="rss-url-box" id="rssUrlBox" title="Click to copy">
-        {{rss_url}}
+      <div class="rss-url-container">
+        <h3>Your Customized RSS Feed URL</h3>
+      
+        <div class="rss-url-box" id="rssUrlBox" title="Click to copy">
+          {{base_rss_url}}
+        </div>
+      
+        <small class="copy-hint">📋 Click the box above to copy the URL</small>
+      </div>      
+  
+      <div class="tooltip" id="tooltip">✅ Copied to clipboard!</div>
     </div>
-
-    <p>Click to copy the URL</p>
-
-    <div class="tooltip" id="tooltip">✅ Copied to clipboard!</div>
-  </div>
-
-  <script>
-    const rssUrlBox = document.getElementById('rssUrlBox');
-    const tooltip = document.getElementById('tooltip');
-
-    rssUrlBox.addEventListener('click', function () {
-      const text = rssUrlBox.textContent.trim();
-      navigator.clipboard.writeText(text).then(() => {
-        tooltip.style.display = 'block';
-        setTimeout(() => tooltip.style.display = 'none', 1500);
+  
+    <script>
+      const rssUrlBox = document.getElementById('rssUrlBox');
+      const tooltip = document.getElementById('tooltip');
+      const radios = document.getElementsByName('sort');
+  
+      const baseUrl = "{{base_rss_url}}";  // Flask injects something like: https://yourdomain/rss?user_id=123
+  
+      radios.forEach(radio => {
+        radio.addEventListener('change', function () {
+          const sortValue = this.value;
+          rssUrlBox.textContent = `${baseUrl}&sort=${sortValue}`;
+        });
       });
-    });
-  </script>
+  
+      rssUrlBox.addEventListener('click', function () {
+        const text = rssUrlBox.textContent.trim();
+        navigator.clipboard.writeText(text).then(() => {
+          tooltip.style.display = 'block';
+          setTimeout(() => tooltip.style.display = 'none', 1500);
+        });
+      });
+    </script>
 
 </body>
 </html>

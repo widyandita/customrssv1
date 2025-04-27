@@ -88,15 +88,6 @@ def generate_avg_recommendations(user_id):
     recsids = filtereddf['_id'].values
     recsids = recsids.tolist()
 
-    rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
-
-    users_collection.update_one(
-        {"user_id": user_id},
-        {"$set": {"recommendations": recsids,
-                  "last_recommendation_time": rec_time}
-        }
-    )
-
     return recsids
 
 def generate_default_rss_feed(user_id, default_news):
@@ -145,6 +136,20 @@ def generate_default_rss_feed(user_id, default_news):
     pretty_rss_feed = reparsed.toprettyxml(indent="  ")
 
     return pretty_rss_feed
+
+def generate_recs_time(df1,df2):
+    df1["pub_date"] = pd.to_datetime(df1["pub_date"])
+    df2["pub_date"] = pd.to_datetime(df2["pub_date"])
+
+    # Get the last time from df1 and latest from df2
+    last_time_1 = df1["pub_date"].min()
+    latest_time_2 = df2["pub_date"].max()
+
+    interval = (latest_time_2 - last_time_1) / 6
+
+    timestamps = [last_time_1 + i * interval for i in range(1,6)]
+
+    return timestamps
 
 @app.route("/")
 def welcome():
@@ -205,7 +210,7 @@ def welcome():
     # Render the welcome page with the custom RSS URL
     return render_template(
         'welcomepg.html',
-        rss_url = rss_url
+        base_rss_url = rss_url
     )
 
 @app.route("/updaterss", methods=["GET"])
@@ -233,45 +238,16 @@ def update_rss_feed():
                 # Default to including all news items in no specific order
                 recommended_ids = []
 
-            # Fetch first news data and title from MongoDB
-            first_news_df = first_news_data()
-            filter_titles = first_news_df["Title"]
+            rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-            # Ensure pub_date is a datetime object and convert to dict
-            first_news_df["pub_date"] = pd.to_datetime(first_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-            first_news_dict = first_news_df.to_dict(orient="records")
-
-            # Fetch all news data from MongoDB
-            all_news_df = default_news_data()
-            all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-            news_dict = all_news_df.to_dict(orient="records")
-
-            # Sort DataFrame by pub_date in descending order and filter by 4 days
-            sorted_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
-            sorted_news_df["date_only"] = sorted_news_df["pub_date"].dt.date
-            recent_dates = sorted_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
-            sorted_news_df = sorted_news_df[sorted_news_df["date_only"].isin(recent_dates)]
-            sorted_news_df = sorted_news_df.to_dict(orient="records")
-
-            all_news_dict = {news["_id"]: news for news in news_dict}  # Map for quick lookup by ID
-
-            # Arrange items based on recommendation order
-            ordered_news = [all_news_dict[news_id] for news_id in recommended_ids if news_id in all_news_dict]
-
-            first_news_dict.extend(ordered_news)
-
-            # Include any remaining items that weren't in the recommendations
-            remaining_news = [
-                            news for news in sorted_news_df
-                            if news["_id"] not in recommended_ids and news["Title"] not in filter_titles
-                        ]
-            first_news_dict.extend(remaining_news)
-
-            pretty_rss_feed = generate_default_rss_feed(user_id, first_news_dict)
-
-            users_collection.update_one({"user_id": user_id}, {"$set": {"rss_feed": pretty_rss_feed}})
+            users_collection.update_one(
+                {"user_id": user_id},
+                {"$set": {"recommendations": recommended_ids,
+                        "last_recommendation_time": rec_time}
+                }
+            )
         
-        return jsonify({"message": "RSS feeds updated for all users"})
+        return jsonify({"message": "News recommendations updated for all users"})
 
 @app.route("/rss", methods=["GET"])
 def generate_rss_feed():
@@ -279,13 +255,62 @@ def generate_rss_feed():
     if not user_id:
         return jsonify({"error": "User ID is required"}), 400
     
+    sort_flag = request.args.get("sort", "false").lower() == "true"
+
     # Fetch the user's RSS feed from the database
     user = users_collection.find_one({"user_id": user_id})
-    if not user or "rss_feed" not in user:
-        return jsonify({"error": "RSS feed not found for the user"}), 404
+    if not user:
+        return jsonify({"error": "User ID not found"}), 404
+    
+    if "recommendations" in user:
+        recommended_ids = user["recommendations"]
+        
+    # Fetch first news data and title from MongoDB
+    first_news_df = first_news_data()
+    filter_titles = first_news_df["Title"]
+
+    # Ensure pub_date is a datetime object and convert to dict
+    first_news_df["pub_date"] = pd.to_datetime(first_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    first_news_dict = first_news_df.to_dict(orient="records")
+
+    # Fetch all news data from MongoDB
+    all_news_df = default_news_data()
+    all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    news_dict = all_news_df.to_dict(orient="records")
+
+    # Sort DataFrame by pub_date in descending order and filter by 4 days
+    sorted_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
+    sorted_news_df["date_only"] = sorted_news_df["pub_date"].dt.date
+    recent_dates = sorted_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
+    sorted_news_df = sorted_news_df[sorted_news_df["date_only"].isin(recent_dates)]
+    sorted_news_df = sorted_news_df.to_dict(orient="records")
+
+    all_news_dict = {news["_id"]: news for news in news_dict}  # Map for quick lookup by ID
+
+    # Arrange items based on recommendation order
+    ordered_news = [all_news_dict[news_id] for news_id in recommended_ids if news_id in all_news_dict]
+
+    if sort_flag:
+        new_timestamps = generate_recs_time(first_news_df, all_news_df)
+
+        for news, new_time in zip(ordered_news, new_timestamps):
+            news['pub_date'] = new_time 
+
+    first_news_dict.extend(ordered_news)
+
+    # Include any remaining items that weren't in the recommendations
+    remaining_news = [
+                    news for news in sorted_news_df
+                    if news["_id"] not in recommended_ids and news["Title"] not in filter_titles
+                ]
+    first_news_dict.extend(remaining_news)
+
+    pretty_rss_feed = generate_default_rss_feed(user_id, first_news_dict)
+
+    users_collection.update_one({"user_id": user_id}, {"$set": {"rss_feed": pretty_rss_feed}})
     
     # Return the RSS feed content
-    response = Response(user["rss_feed"], content_type="application/rss+xml")
+    response = Response(pretty_rss_feed, content_type="application/rss+xml")
     return response
 
 @app.route("/track", methods=["GET"])
