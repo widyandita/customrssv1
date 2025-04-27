@@ -101,12 +101,12 @@
       <fieldset class="radio-group">
         <legend>📰 Choose RSS Feed Order</legend>
         <label class="radio-option">
-          <input type="radio" name="sort" value="true" checked>
-          <span>Custom Recommendation Order</span>
+          <input type="radio" name="sort" value="false" checked>
+          <span>Default News Order</span>
         </label>
         <label class="radio-option">
-          <input type="radio" name="sort" value="false">
-          <span>Default News Order</span>
+          <input type="radio" name="sort" value="true">
+          <span>Custom Recommendation Order</span>
         </label>
       </fieldset>      
 
@@ -128,7 +128,7 @@
       const tooltip = document.getElementById('tooltip');
       const radios = document.getElementsByName('sort');
   
-      const baseUrl = "{{base_rss_url}}";  // Flask injects something like: https://yourdomain/rss?user_id=123
+      const baseUrl = "{{base_rss_url}}";
   
       radios.forEach(radio => {
         radio.addEventListener('change', function () {
