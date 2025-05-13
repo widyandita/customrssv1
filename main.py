@@ -313,6 +313,27 @@ def generate_rss_feed():
     response = Response(pretty_rss_feed, content_type="application/rss+xml")
     return response
 
+@app.route('/uat_recommendations', methods=['GET'])
+def get_uat_recommendations():
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({"error: User ID not found."})
+
+    # Fetch recommendations from MongoDB
+    user_data = users_collection.find_one({'user_id': user_id})
+    recommended_ids = user_data["recommendations"]
+    
+    if recommended_ids:
+        all_news_df = default_news_data()
+        news_title_map = dict(zip(all_news_df["_id"], all_news_df["Title"]))
+        ordered_news = [news_title_map[news_id] for news_id in recommended_ids if news_id in news_title_map]
+        
+    if len(recommended_ids) == 0:
+        return jsonify({"No recommendations were made yet."})
+
+    return jsonify(ordered_news)
+
 @app.route("/track", methods=["GET"])
 def track():
     raw_query_string = request.query_string.decode("utf-8")
