@@ -318,7 +318,7 @@ def get_uat_recommendations():
     user_id = request.args.get('user_id')
 
     if not user_id:
-        return jsonify({"error: User ID not found."})
+        return jsonify({"error": "User ID not found."})
 
     # Fetch recommendations from MongoDB
     user_data = users_collection.find_one({'user_id': user_id})
@@ -330,7 +330,7 @@ def get_uat_recommendations():
         ordered_news = [news_title_map[news_id] for news_id in recommended_ids if news_id in news_title_map]
         
     if len(recommended_ids) == 0:
-        return jsonify({"No recommendations were made yet."})
+        ordered_news = "No recommendations were made yet."
 
     return jsonify(ordered_news)
 
