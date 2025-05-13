@@ -34,7 +34,7 @@ def rfc822_date():
     return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 def default_news_data():
-    collection_1 = db.test_berita1
+    collection_1 = db.data_berita
     data = list(collection_1.find())
     dfdata = pd.DataFrame(data)
     dfdata['_id'] = dfdata['_id'].astype(str)
