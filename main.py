@@ -324,15 +324,27 @@ def get_uat_recommendations():
     user_data = users_collection.find_one({'user_id': user_id})
     recommended_ids = user_data["recommendations"]
     
+    if user_data and "clicked_news" in user_data:
+        # Sort the clicked_news by timestamp and extract the news_id
+        clicked_ids = [
+            news["news_id"] for news in sorted(user_data["clicked_news"], key=lambda x: x["timestamp"])
+        ]
+        clicked_titles = [news_title_map[news_id] for news_id in clicked_ids if news_id in news_title_map]
+    
     if recommended_ids:
         all_news_df = default_news_data()
         news_title_map = dict(zip(all_news_df["_id"], all_news_df["Title"]))
         ordered_news = [news_title_map[news_id] for news_id in recommended_ids if news_id in news_title_map]
         
+    if len(clicked_ids) == 0:
+        clicked_titles = "No news were clicked yet."
+
     if len(recommended_ids) == 0:
         ordered_news = "No recommendations were made yet."
 
-    return jsonify(ordered_news)
+    return jsonify({"clicked_news":clicked_titles,
+                    "recommended_news":ordered_news})
+
 
 @app.route("/track", methods=["GET"])
 def track():
