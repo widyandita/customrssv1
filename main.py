@@ -292,7 +292,7 @@ def generate_rss_feed():
 
     remaining_news = [item for item in all_news_dict if item['_id'] not in recommended_ids_set]
 
-    combined_news = remaining_news + ordered_news
+    combined_news =  ordered_news + remaining_news
 
     pretty_rss_feed = generate_default_rss_feed(user_id, combined_news)
 
