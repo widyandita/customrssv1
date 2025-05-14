@@ -282,8 +282,6 @@ def generate_rss_feed():
     # Then get only the recommended items, in order
     ordered_news = [news_by_id[news_id] for news_id in recommended_ids if news_id in news_by_id]
 
-    sort_flag = "true"
-
     if sort_flag:
         new_timestamps = generate_recs_time(all_news_df)
 
