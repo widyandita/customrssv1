@@ -34,61 +34,65 @@ def rfc822_date():
     return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 def default_news_data():
-    collection_1 = db.data_berita
+    collection_1 = db.s_data_berita
     data = list(collection_1.find())
     dfdata = pd.DataFrame(data)
     dfdata['_id'] = dfdata['_id'].astype(str)
 
     return dfdata
 
-def first_news_data():
-    collection_1 = db.test_data_first
-    data = list(collection_1.find())
-    dfdata = pd.DataFrame(data)
-    dfdata['_id'] = dfdata['_id'].astype(str)
-
-    return dfdata
-
-def generate_avg_recommendations(user_id):
+def generate_unique_recommendations(user_id):
     clicked_news = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
 
+    # Sort clicked news by ascending time and ensure they are unique
     sorted_news_ids = []
     if clicked_news and "clicked_news" in clicked_news:
         sorted_news_ids = [
             news["news_id"] for news in sorted(clicked_news["clicked_news"], key=lambda x: x["timestamp"])
         ]
-   
     unique_news_ids = []
     for item in sorted_news_ids:
         if item not in unique_news_ids:
             unique_news_ids.append(item)
-    
+
+    # Initialize data and recommendation number
     df1 = default_news_data()
     rec_num = 5
 
+    # TfidfVectorizer by default
     tfidf_matrix = TfidfVectorizer()
-    cleanedt = df1['Cleaned_Title'].values
+
+    # Get document (all news) and query (clicked news) values
+    cleanedt = df1['Cleaned_sw_title'].values
     filtered_df = df1[df1['_id'].isin(unique_news_ids)]
-    # Determine the indices of the clicked news in the DataFrame
-    clicked_indices = df1.index[df1['_id'].isin(unique_news_ids)].tolist()
-    # Extract the title values as a list
-    titles = filtered_df['Cleaned_Title'].tolist()
+    c_indexes = filtered_df.index.tolist()
+    titles = filtered_df['Cleaned_sw_title'].tolist()
 
-    tfidf_matrix.fit(cleanedt)
+    # Fit document to vectorizer and transform
+    tfidf_matrix.fit_transform(cleanedt)
     tfidf_vector = tfidf_matrix.transform(cleanedt)
-    i_tfidf_vector = tfidf_matrix.transform(titles)
-    composite_vector = np.mean(i_tfidf_vector.toarray(), axis=0).reshape(1, -1)
 
-    similarity = cosine_similarity(composite_vector, tfidf_vector)
-    rank = similarity.flatten().argsort()[::-1]
-    final_recommended_articles_index = [
-                                        i for i in rank if i not in clicked_indices
-                                    ][:rec_num]
-    filtereddf = df1.loc[final_recommended_articles_index]
-    recsids = filtereddf['_id'].values
-    recsids = recsids.tolist()
+    all_recommended_ids = []
 
-    return recsids
+    # Recommendation iteration
+    for i, doc in enumerate(titles):
+        i_tfidf_vector = tfidf_matrix.transform([doc])
+        similarity = cosine_similarity(i_tfidf_vector, tfidf_vector)
+
+        # Rank articles by similarity, excluding itself
+        rank = similarity.flatten().argsort()[::-1]
+        recommended_indices = [idx for idx in rank if idx not in c_indexes][:rec_num]
+
+        # Get article IDs
+        filtereddf = df1.iloc[recommended_indices]
+        recsids = filtereddf['_id'].values.tolist()
+
+        all_recommended_ids.extend(recsids)
+
+    seen = set()
+    unique_recommended_ids = [x for x in all_recommended_ids if not (x in seen or seen.add(x))]
+
+    return unique_recommended_ids
 
 def generate_default_rss_feed(user_id, default_news):
     # Begin manual RSS construction
@@ -137,17 +141,17 @@ def generate_default_rss_feed(user_id, default_news):
 
     return pretty_rss_feed
 
-def generate_recs_time(df1,df2):
-    df1["pub_date"] = pd.to_datetime(df1["pub_date"])
-    df2["pub_date"] = pd.to_datetime(df2["pub_date"])
-
+def generate_recs_time(df1, rec_length):
+    t_rec_length = rec_length + 1
+    df1 = df1.sort_values(by="pub_date", ascending=False)
+    df1 = df1.reset_index(drop=True)
     # Get the last time from df1 and latest from df2
-    last_time_1 = df1["pub_date"].min()
-    latest_time_2 = df2["pub_date"].max()
+    last_time_1 = df1["pub_date"][4]
+    latest_time_2 = df1["pub_date"][5]
 
-    interval = (latest_time_2 - last_time_1) / 6
+    interval = (latest_time_2 - last_time_1) / t_rec_length
 
-    timestamps = [last_time_1 + i * interval for i in range(1,6)]
+    timestamps = [last_time_1 + i * interval for i in range(1,t_rec_length)]
 
     return timestamps
 
@@ -156,43 +160,25 @@ def welcome():
     # Generate a new user ID
     user_id = str(uuid.uuid4())
 
-    # Fetch first news data and title from MongoDB
-    first_news_df = first_news_data()
-    filter_titles = first_news_df["Title"]
-
-    # Ensure pub_date is a datetime object and convert to dict
-    first_news_df["pub_date"] = pd.to_datetime(first_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-    first_news_dict = first_news_df.to_dict(orient="records")
-
-    # Fetch all news data from MongoDB
+    # Fetch all news data and sort in descending order
     all_news_df = default_news_data()
     all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-    news_dict = all_news_df.to_dict(orient="records")
+    all_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
 
-    # Sort DataFrame by pub_date in descending order and filter by 4 days
-    sorted_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
-    sorted_news_df["date_only"] = sorted_news_df["pub_date"].dt.date
-    recent_dates = sorted_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
-    sorted_news_df = sorted_news_df[sorted_news_df["date_only"].isin(recent_dates)]
-    sorted_news_df = sorted_news_df.to_dict(orient="records")
-
-    all_news_dict = {news["_id"]: news for news in news_dict}  # Map for quick lookup by ID
+    # Create date only column for later processing
+    all_news_df["date_only"] = all_news_df["pub_date"].dt.date
+    recent_dates = all_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
 
     recommended_ids = []
 
-    # Arrange items based on recommendation order
-    ordered_news = [all_news_dict[news_id] for news_id in recommended_ids if news_id in all_news_dict]
+    # Filter out recommended news from all news data and extend to recommended news data
+    remaining_df = all_news_df[~all_news_df['_id'].isin(recommended_ids)].copy()
 
-    first_news_dict.extend(ordered_news)
+    # Filter out past dates (only getting the recent 4 days)
+    remaining_df = remaining_df[remaining_df["date_only"].isin(recent_dates)]
+    remaining_news = remaining_df.to_dict(orient="records")
 
-    # Include any remaining items that weren't in the recommendations
-    remaining_news = [
-                    news for news in sorted_news_df
-                    if news["_id"] not in recommended_ids and news["Title"] not in filter_titles
-                ]
-    first_news_dict.extend(remaining_news)
-
-    pretty_rss_feed = generate_default_rss_feed(user_id, first_news_dict)
+    pretty_rss_feed = generate_default_rss_feed(user_id, remaining_news)
     
     # Store the user in the database
     users_collection.insert_one({
@@ -233,7 +219,7 @@ def update_rss_feed():
 
             if len(sorted_news_ids) > 0:
                 # Generate recommendations based on the tracked ID
-                recommended_ids = generate_avg_recommendations(user_id)
+                recommended_ids = generate_unique_recommendations(user_id)
             else:
                 # Default to including all news items in no specific order
                 recommended_ids = []
@@ -265,47 +251,40 @@ def generate_rss_feed():
     if "recommendations" in user:
         recommended_ids = user["recommendations"]
         
-    # Fetch first news data and title from MongoDB
-    first_news_df = first_news_data()
-    filter_titles = first_news_df["Title"]
-
-    # Ensure pub_date is a datetime object and convert to dict
-    first_news_df["pub_date"] = pd.to_datetime(first_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-    first_news_dict = first_news_df.to_dict(orient="records")
-
-    # Fetch all news data from MongoDB
+ # Fetch all news data and sort in descending order
     all_news_df = default_news_data()
     all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-    news_dict = all_news_df.to_dict(orient="records")
+    all_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
 
-    # Sort DataFrame by pub_date in descending order and filter by 4 days
-    sorted_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
-    sorted_news_df["date_only"] = sorted_news_df["pub_date"].dt.date
-    recent_dates = sorted_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
-    sorted_news_df = sorted_news_df[sorted_news_df["date_only"].isin(recent_dates)]
-    sorted_news_df = sorted_news_df.to_dict(orient="records")
+    # Create date only column for later processing
+    all_news_df["date_only"] = all_news_df["pub_date"].dt.date
+    recent_dates = all_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
 
-    all_news_dict = {news["_id"]: news for news in news_dict}  # Map for quick lookup by ID
+    # Filter the recommended news from all news data and sort by recommended id
+    filtered_df = all_news_df[all_news_df['_id'].isin(recommended_ids)]
+    filtered_df = filtered_df.set_index('_id').loc[recommended_ids]
+    filtered_df = filtered_df.reset_index()
+    cols = filtered_df.columns.tolist()
+    cols.insert(0, cols.pop(cols.index('_id')))
+    filtered_df = filtered_df[cols]
+    news_recs = filtered_df.to_dict(orient="records")
 
-    # Arrange items based on recommendation order
-    ordered_news = [all_news_dict[news_id] for news_id in recommended_ids if news_id in all_news_dict]
-
+    # Changes pub_date if sort_flag is true
     if sort_flag:
-        new_timestamps = generate_recs_time(first_news_df, all_news_df)
+        new_timestamps = generate_recs_time(all_news_df, len(recommended_ids))
 
-        for news, new_time in zip(ordered_news, new_timestamps):
-            news['pub_date'] = new_time 
+        for news, new_time in zip(news_recs, new_timestamps):
+            news['pub_date'] = new_time
 
-    first_news_dict.extend(ordered_news)
+    # Filter out recommended news from all news data and extend to recommended news data
+    remaining_df = all_news_df[~all_news_df['_id'].isin(recommended_ids)].copy()
 
-    # Include any remaining items that weren't in the recommendations
-    remaining_news = [
-                    news for news in sorted_news_df
-                    if news["_id"] not in recommended_ids and news["Title"] not in filter_titles
-                ]
-    first_news_dict.extend(remaining_news)
+    # Filter out past dates (only getting the recent 4 days)
+    remaining_df = remaining_df[remaining_df["date_only"].isin(recent_dates)]
+    remaining_news = remaining_df.to_dict(orient="records")
+    news_recs.extend(remaining_news)
 
-    pretty_rss_feed = generate_default_rss_feed(user_id, first_news_dict)
+    pretty_rss_feed = generate_default_rss_feed(user_id, news_recs)
 
     users_collection.update_one({"user_id": user_id}, {"$set": {"rss_feed": pretty_rss_feed}})
     
@@ -355,9 +334,7 @@ def track():
     news_id = query_params.get("news_id", [None])[0]
 
     redirect_to = request.args.get("redirect", "true")  # Extract 'redirect' parameter
-    news_data = first_news_data().to_dict(orient="records")
-    all_news_data = default_news_data().to_dict(orient="records")
-    news_data.extend(all_news_data)
+    news_data = default_news_data().to_dict(orient="records")
     
     # Validate parameters
     if redirect_to == "true" and news_id is not None:
