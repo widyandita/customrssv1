@@ -9,7 +9,6 @@ from html import unescape
 
 from xml.etree.ElementTree import Element, SubElement, tostring
 import xml.dom.minidom as minidom
-from copy import deepcopy
 
 import pandas as pd
 import numpy as np
@@ -94,32 +93,6 @@ def generate_unique_recommendations(user_id):
     unique_recommended_ids = [x for x in all_recommended_ids if not (x in seen or seen.add(x))]
 
     return unique_recommended_ids
-
-def prepare_base_feed(all_news_df, recommended_ids):
-    all_news_df["date_only"] = all_news_df["pub_date"].dt.date
-    recent_dates = all_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
-
-    filtered_df = all_news_df[all_news_df['_id'].isin(recommended_ids)]
-    filtered_df = filtered_df.set_index('_id').loc[recommended_ids].reset_index()
-    cols = filtered_df.columns.tolist()
-    cols.insert(0, cols.pop(cols.index('_id')))
-    filtered_df = filtered_df[cols]
-    news_recs = filtered_df.to_dict(orient="records")
-
-    remaining_df = all_news_df[~all_news_df['_id'].isin(recommended_ids)].copy()
-    remaining_df = remaining_df[remaining_df["date_only"].isin(recent_dates)]
-    remaining_news = remaining_df.to_dict(orient="records")
-
-    return news_recs, remaining_news
-
-def generate_feed(all_news_df, user_id, news_recs, remaining_news, sort_flag):
-    news = deepcopy(news_recs)  # prevent mutation
-    if sort_flag:
-        new_timestamps = generate_recs_time(all_news_df, len(news_recs))
-        for n, t in zip(news, new_timestamps):
-            n['pub_date'] = t
-    news.extend(remaining_news)
-    return generate_default_rss_feed(user_id, news)
 
 def generate_default_rss_feed(user_id, default_news):
     # Begin manual RSS construction
@@ -214,9 +187,8 @@ def welcome():
         "clicked_news": [],
         "last_recommendation_time": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
         "recommendations": [],
-        "rss_feed_sorted": pretty_rss_feed,
-        "rss_feed_unsorted": pretty_rss_feed
-   })
+        "rss_feed": pretty_rss_feed
+    })
     
     # Generate the RSS feed URL for the user
     rss_url = url_for("generate_rss_feed", user_id=user_id, _external=True)
@@ -252,25 +224,12 @@ def update_rss_feed():
                 # Default to including all news items in no specific order
                 recommended_ids = []
 
-            # Fetch all news data and sort in descending order
-            all_news_df = default_news_data()
-            all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-            all_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
-
-            news_recs, remaining_news = prepare_base_feed(all_news_df, recommended_ids)
-
-            # Generate both feeds
-            rss_sorted = generate_feed(all_news_df, user_id, news_recs, remaining_news, sort_flag=True)
-            rss_unsorted = generate_feed(all_news_df, user_id, news_recs, remaining_news, sort_flag=False)
-
             rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
-            
+
             users_collection.update_one(
                 {"user_id": user_id},
                 {"$set": {"recommendations": recommended_ids,
-                        "last_recommendation_time": rec_time,
-                        "rss_feed_sorted": rss_sorted,
-                        "rss_feed_unsorted": rss_unsorted}
+                        "last_recommendation_time": rec_time}
                 }
             )
         
@@ -289,14 +248,48 @@ def generate_rss_feed():
     if not user:
         return jsonify({"error": "User ID not found"}), 404
     
-    if sort_flag:
-        pretty_rss_feed = user["rss_feed_sorted"]
-    else:
-        pretty_rss_feed = user["rss_feed_unsorted"]
+    if "recommendations" in user:
+        recommended_ids = user["recommendations"]
+        
+ # Fetch all news data and sort in descending order
+    all_news_df = default_news_data()
+    all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    all_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
 
+    # Create date only column for later processing
+    all_news_df["date_only"] = all_news_df["pub_date"].dt.date
+    recent_dates = all_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
+
+    # Filter the recommended news from all news data and sort by recommended id
+    filtered_df = all_news_df[all_news_df['_id'].isin(recommended_ids)]
+    filtered_df = filtered_df.set_index('_id').loc[recommended_ids]
+    filtered_df = filtered_df.reset_index()
+    cols = filtered_df.columns.tolist()
+    cols.insert(0, cols.pop(cols.index('_id')))
+    filtered_df = filtered_df[cols]
+    news_recs = filtered_df.to_dict(orient="records")
+
+    # Changes pub_date if sort_flag is true
+    if sort_flag:
+        new_timestamps = generate_recs_time(all_news_df, len(recommended_ids))
+
+        for news, new_time in zip(news_recs, new_timestamps):
+            news['pub_date'] = new_time
+
+    # Filter out recommended news from all news data and extend to recommended news data
+    remaining_df = all_news_df[~all_news_df['_id'].isin(recommended_ids)].copy()
+
+    # Filter out past dates (only getting the recent 4 days)
+    remaining_df = remaining_df[remaining_df["date_only"].isin(recent_dates)]
+    remaining_news = remaining_df.to_dict(orient="records")
+    news_recs.extend(remaining_news)
+
+    pretty_rss_feed = generate_default_rss_feed(user_id, news_recs)
+
+    users_collection.update_one({"user_id": user_id}, {"$set": {"rss_feed": pretty_rss_feed}})
+    
     # Return the RSS feed content
     response = Response(pretty_rss_feed, content_type="application/rss+xml")
-    
     return response
 
 @app.route('/uat_recommendations', methods=['GET'])
