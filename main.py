@@ -35,7 +35,7 @@ def rfc822_date():
 
 def default_news_data():
     collection_1 = db.s_data_berita
-    data = list(collection_1.find().sort("_id", -1).limit(1500)) 
+    data = list(collection_1.find().sort("_id", -1).limit(500)) 
     dfdata = pd.DataFrame(data)
     dfdata['_id'] = dfdata['_id'].astype(str)
     dfdata["pub_date"] = pd.to_datetime(dfdata["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
@@ -189,21 +189,9 @@ def welcome():
 
     # Fetch all news data and sort in descending order
     all_news_df = default_news_data()
-
-    # Create date only column for later processing
-    all_news_df["date_only"] = all_news_df["pub_date"].dt.date
-    recent_dates = all_news_df["date_only"].drop_duplicates().head(4)
-
-    recommended_ids = []
-
-    # Filter out recommended news from all news data and extend to recommended news data
-    remaining_df = all_news_df[~all_news_df['_id'].isin(recommended_ids)].copy()
-
-    # Filter out past dates (only getting the recent 4 days)
-    remaining_df = remaining_df[remaining_df["date_only"].isin(recent_dates)]
-    remaining_news = remaining_df.to_dict(orient="records")
-
-    pretty_rss_feed = generate_default_rss_feed(user_id, remaining_news)
+    all_news = all_news_df.to_dict(orient="records")
+    
+    pretty_rss_feed = generate_default_rss_feed(user_id, all_news)
     
     # Store the user in the database
     users_collection.insert_one({
