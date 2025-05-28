@@ -20,10 +20,10 @@ app = Flask(__name__)
 
 # Load environment variables (production values are provided via app.yaml)
 app.config['FLASK_ENV'] = os.getenv('FLASK_ENV', 'production')
-app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://widya-nandita-tugas-akhir.et.r.appspot.com')
+app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://ta-customrss.et.r.appspot.com')
 app.config['PREFERRED_URL_SCHEME'] = 'https'
 
-BASE_URL = "https://widya-nandita-tugas-akhir.et.r.appspot.com"
+BASE_URL = "https://ta-customrss.et.r.appspot.com"
 
 mongo_uri = os.getenv('MONGO_URI')
 conn = MongoClient(mongo_uri)
@@ -39,7 +39,10 @@ def default_news_data():
     data = list(collection_1.find())
     dfdata = pd.DataFrame(data)
     dfdata['_id'] = dfdata['_id'].astype(str)
-
+    dfdata["pub_date"] = pd.to_datetime(dfdata["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    dfdata = dfdata.sort_values(by="pub_date", ascending=False)
+    dfdata = dfdata.reset_index(drop=True)
+    
     return dfdata
 
 def generate_unique_recommendations(user_id):
@@ -97,7 +100,7 @@ def generate_unique_recommendations(user_id):
 
 def prepare_base_feed(all_news_df, recommended_ids):
     all_news_df["date_only"] = all_news_df["pub_date"].dt.date
-    recent_dates = all_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
+    recent_dates = all_news_df["date_only"].drop_duplicates().head(4)
 
     filtered_df = all_news_df[all_news_df['_id'].isin(recommended_ids)]
     filtered_df = filtered_df.set_index('_id').loc[recommended_ids].reset_index()
@@ -170,8 +173,6 @@ def generate_default_rss_feed(user_id, default_news):
 
 def generate_recs_time(df1, rec_length):
     t_rec_length = rec_length + 1
-    df1 = df1.sort_values(by="pub_date", ascending=False)
-    df1 = df1.reset_index(drop=True)
     # Get the last time from df1 and latest from df2
     last_time_1 = df1["pub_date"][4]
     latest_time_2 = df1["pub_date"][5]
@@ -189,12 +190,10 @@ def welcome():
 
     # Fetch all news data and sort in descending order
     all_news_df = default_news_data()
-    all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-    all_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
 
     # Create date only column for later processing
     all_news_df["date_only"] = all_news_df["pub_date"].dt.date
-    recent_dates = all_news_df["date_only"].drop_duplicates().sort_values(ascending=False).head(4)
+    recent_dates = all_news_df["date_only"].drop_duplicates().head(4)
 
     recommended_ids = []
 
@@ -254,8 +253,6 @@ def update_rss_feed():
 
             # Fetch all news data and sort in descending order
             all_news_df = default_news_data()
-            all_news_df["pub_date"] = pd.to_datetime(all_news_df["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
-            all_news_df = all_news_df.sort_values(by="pub_date", ascending=False)
 
             news_recs, remaining_news = prepare_base_feed(all_news_df, recommended_ids)
 
@@ -365,8 +362,5 @@ def track():
     return "Invalid tracking parameters", 400
 
 if __name__ == "__main__":
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(update_rss_feed, 'interval', minutes=50)
-    scheduler.start()
-
+    
     app.run(debug=False)
