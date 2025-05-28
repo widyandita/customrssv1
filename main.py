@@ -12,7 +12,6 @@ import xml.dom.minidom as minidom
 from copy import deepcopy
 
 import pandas as pd
-import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -20,10 +19,10 @@ app = Flask(__name__)
 
 # Load environment variables (production values are provided via app.yaml)
 app.config['FLASK_ENV'] = os.getenv('FLASK_ENV', 'production')
-app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://ta-customrss.et.r.appspot.com')
+app.config['BASE_URL'] = os.getenv('BASE_URL', 'https://ta-customrss.as.r.appspot.com')
 app.config['PREFERRED_URL_SCHEME'] = 'https'
 
-BASE_URL = "https://ta-customrss.et.r.appspot.com"
+BASE_URL = "https://ta-customrss.as.r.appspot.com"
 
 mongo_uri = os.getenv('MONGO_URI')
 conn = MongoClient(mongo_uri)
