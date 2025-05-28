@@ -35,7 +35,7 @@ def rfc822_date():
 
 def default_news_data():
     collection_1 = db.s_data_berita
-    data = list(collection_1.find())
+    data = list(collection_1.find().sort("_id", -1).limit(2500)) 
     dfdata = pd.DataFrame(data)
     dfdata['_id'] = dfdata['_id'].astype(str)
     dfdata["pub_date"] = pd.to_datetime(dfdata["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
