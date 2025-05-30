@@ -11,6 +11,8 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 import xml.dom.minidom as minidom
 
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 
@@ -137,6 +139,106 @@ def generate_feed(user_id, filtered_df, sort_flag):
     news.extend(remaining_news)
     
     return generate_default_rss_feed(user_id, news)
+
+def all_news_data():
+    collection_1 = db.s_data_berita
+    data = list(collection_1.find())
+    dfdata = pd.DataFrame(data)
+    dfdata['_id'] = dfdata['_id'].astype(str)
+    dfdata["pub_date"] = pd.to_datetime(dfdata["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
+    dfdata = dfdata.sort_values(by="pub_date", ascending=False)
+    dfdata = dfdata.reset_index(drop=True)
+
+    return dfdata
+
+def generate_unique_recommendations(user_id):
+    clicked_news = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
+
+    # Sort clicked news by ascending time and ensure they are unique
+    sorted_news_ids = []
+    if clicked_news and "clicked_news" in clicked_news:
+        sorted_news_ids = [
+            news["news_id"] for news in sorted(clicked_news["clicked_news"], key=lambda x: x["timestamp"])
+        ]
+    unique_news_ids = []
+    for item in sorted_news_ids:
+        if item not in unique_news_ids:
+            unique_news_ids.append(item)
+
+    # Initialize data and recommendation number
+    df1 = all_news_data()
+    rec_num = 5
+
+    # TfidfVectorizer by default
+    tfidf_matrix = TfidfVectorizer()
+
+    # Get document (all news) and query (clicked news) values
+    cleanedt = df1['Cleaned_sw_title'].values
+    filtered_df = df1[df1['_id'].isin(unique_news_ids)]
+    c_indexes = filtered_df.index.tolist()
+    titles = filtered_df['Cleaned_sw_title'].tolist()
+
+    # Fit document to vectorizer and transform
+    tfidf_matrix.fit_transform(cleanedt)
+    tfidf_vector = tfidf_matrix.transform(cleanedt)
+
+    all_recommended_articles = []
+
+    # Recommendation iteration
+    for i, doc in enumerate(titles):
+        i_tfidf_vector = tfidf_matrix.transform([doc])
+        similarity = cosine_similarity(i_tfidf_vector, tfidf_vector)
+
+        # Rank articles by similarity, excluding itself
+        rank = similarity.flatten().argsort()[::-1]
+        recommended_indices = [idx for idx in rank if idx not in c_indexes][:rec_num]
+
+        all_recommended_articles.extend(recommended_indices)
+
+    # Get article IDs
+    filtereddf = df1.iloc[all_recommended_articles]
+    filtereddf = filtereddf.drop_duplicates(subset=['_id'])
+
+    return filtereddf.to_dict(orient="records")
+
+@app.route("/updaterecs", methods=["GET"])
+def update_rss_feed():
+    users = users_collection.find()
+        
+    recs_log = []
+    for user in users:
+        user_id = user["user_id"]
+
+        # Check if the user exists in the database
+        user = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
+        if not user:
+            return "Invalid user ID", 404
+
+        if user and "clicked_news" in user:
+        # Sort the clicked_news by timestamp and extract the news_id
+            sorted_news_ids = [
+                news["news_id"] for news in sorted(user["clicked_news"], key=lambda x: x["timestamp"])
+            ]
+
+        if len(sorted_news_ids) > 0:
+            # Generate recommendations based on the tracked ID
+            recommended_news = generate_unique_recommendations(user_id)
+        else:
+            # Default to including all news items in no specific order
+            recommended_news = []
+
+        rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+            
+        users_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"recommendations": recommended_news,
+                    "last_recommendation_time": rec_time}
+            }
+        )
+
+        recs_log.append(f"Sebanyak {len(recommended_news)} rekomendasi dihasilkan untuk user {user_id}")
+    
+    return jsonify({recs_log})
 
 @app.route("/")
 def welcome():
