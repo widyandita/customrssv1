@@ -9,8 +9,11 @@ from html import unescape
 
 from xml.etree.ElementTree import Element, SubElement, tostring
 import xml.dom.minidom as minidom
+from copy import deepcopy
 
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 
@@ -26,6 +29,10 @@ conn = MongoClient(mongo_uri)
 db = conn.get_database('test_data_berita')
 users_collection = db.test_users2
 
+def rfc822_date():
+    now = datetime.utcnow()
+    return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
+
 def default_news_data():
     collection_1 = db.s_data_berita
     data = list(collection_1.find().sort("_id", -1).limit(500)) 
@@ -34,45 +41,87 @@ def default_news_data():
     dfdata["pub_date"] = pd.to_datetime(dfdata["pub_date"], format="%a, %d %b %Y %H:%M:%S %z")
     dfdata = dfdata.sort_values(by="pub_date", ascending=False)
     dfdata = dfdata.reset_index(drop=True)
-
+    
     return dfdata
 
-def recommended_news_data():
-    users = users_collection.find()
+def generate_unique_recommendations(user_id):
+    clicked_news = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
 
-    recs_df = []
-    for user in users:
-        user_id = user["user_id"]
+    # Sort clicked news by ascending time and ensure they are unique
+    sorted_news_ids = []
+    if clicked_news and "clicked_news" in clicked_news:
+        sorted_news_ids = [
+            news["news_id"] for news in sorted(clicked_news["clicked_news"], key=lambda x: x["timestamp"])
+        ]
+    unique_news_ids = []
+    for item in sorted_news_ids:
+        if item not in unique_news_ids:
+            unique_news_ids.append(item)
 
-        # Check if the user exists in the database
-        user = users_collection.find_one({"user_id": user_id}, {"recommendations": 1})
+    # Initialize data and recommendation number
+    df1 = default_news_data()
+    rec_num = 5
 
-        recommended_news_dict = user["recommendations"]
+    # TfidfVectorizer by default
+    tfidf_matrix = TfidfVectorizer()
 
-        if len(recommended_news_dict) > 0:
-            recs_df.append(recommended_news_dict)
+    # Get document (all news) and query (clicked news) values
+    cleanedt = df1['Cleaned_sw_title'].values
+    filtered_df = df1[df1['_id'].isin(unique_news_ids)]
+    c_indexes = filtered_df.index.tolist()
+    titles = filtered_df['Cleaned_sw_title'].tolist()
 
-    flat_recs_list = [item for sublist in recs_df for item in sublist]
+    # Fit document to vectorizer and transform
+    tfidf_matrix.fit_transform(cleanedt)
+    tfidf_vector = tfidf_matrix.transform(cleanedt)
 
-    combined_recs_df = pd.DataFrame(flat_recs_list)
+    all_recommended_ids = []
 
-    return combined_recs_df
+    # Recommendation iteration
+    for i, doc in enumerate(titles):
+        i_tfidf_vector = tfidf_matrix.transform([doc])
+        similarity = cosine_similarity(i_tfidf_vector, tfidf_vector)
 
-def rfc822_date():
-        now = datetime.utcnow()
-        return now.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        # Rank articles by similarity, excluding itself
+        rank = similarity.flatten().argsort()[::-1]
+        recommended_indices = [idx for idx in rank if idx not in c_indexes][:rec_num]
 
-def generate_recs_time(df1, rec_length):
-    t_rec_length = rec_length + 1
-    # Get the last time from df1 and latest from df2
-    last_time_1 = df1["pub_date"][4]
-    latest_time_2 = df1["pub_date"][5]
+        # Get article IDs
+        filtereddf = df1.iloc[recommended_indices]
+        recsids = filtereddf['_id'].values.tolist()
 
-    interval = (latest_time_2 - last_time_1) / t_rec_length
+        all_recommended_ids.extend(recsids)
 
-    timestamps = [last_time_1 + i * interval for i in range(1,t_rec_length)]
+    seen = set()
+    unique_recommended_ids = [x for x in all_recommended_ids if not (x in seen or seen.add(x))]
 
-    return timestamps
+    return unique_recommended_ids
+
+def prepare_base_feed(all_news_df, recommended_ids):
+    all_news_df["date_only"] = all_news_df["pub_date"].dt.date
+    recent_dates = all_news_df["date_only"].drop_duplicates().head(4)
+
+    filtered_df = all_news_df[all_news_df['_id'].isin(recommended_ids)]
+    filtered_df = filtered_df.set_index('_id').loc[recommended_ids].reset_index()
+    cols = filtered_df.columns.tolist()
+    cols.insert(0, cols.pop(cols.index('_id')))
+    filtered_df = filtered_df[cols]
+    news_recs = filtered_df.to_dict(orient="records")
+
+    remaining_df = all_news_df[~all_news_df['_id'].isin(recommended_ids)].copy()
+    remaining_df = remaining_df[remaining_df["date_only"].isin(recent_dates)]
+    remaining_news = remaining_df.to_dict(orient="records")
+
+    return news_recs, remaining_news
+
+def generate_feed(all_news_df, user_id, news_recs, remaining_news, sort_flag):
+    news = deepcopy(news_recs)  # prevent mutation
+    if sort_flag:
+        new_timestamps = generate_recs_time(all_news_df, len(news_recs))
+        for n, t in zip(news, new_timestamps):
+            n['pub_date'] = t
+    news.extend(remaining_news)
+    return generate_default_rss_feed(user_id, news)
 
 def generate_default_rss_feed(user_id, default_news):
     # Begin manual RSS construction
@@ -121,22 +170,17 @@ def generate_default_rss_feed(user_id, default_news):
 
     return pretty_rss_feed
 
-def generate_feed(user_id, filtered_df, sort_flag):
-    all_news_df = default_news_data()
-    
-    news = filtered_df.to_dict(orient="records")
-    
-    remaining_df = all_news_df[~all_news_df['_id'].isin(filtered_df['_id'])].copy()
-    remaining_news = remaining_df.to_dict(orient="records")
+def generate_recs_time(df1, rec_length):
+    t_rec_length = rec_length + 1
+    # Get the last time from df1 and latest from df2
+    last_time_1 = df1["pub_date"][4]
+    latest_time_2 = df1["pub_date"][5]
 
-    if sort_flag:
-        new_timestamps = generate_recs_time(all_news_df, len(news))
-        for n, t in zip(news, new_timestamps):
-            n['pub_date'] = t
+    interval = (latest_time_2 - last_time_1) / t_rec_length
 
-    news.extend(remaining_news)
-    
-    return generate_default_rss_feed(user_id, news)
+    timestamps = [last_time_1 + i * interval for i in range(1,t_rec_length)]
+
+    return timestamps
 
 @app.route("/")
 def welcome():
@@ -145,10 +189,9 @@ def welcome():
 
     # Fetch all news data and sort in descending order
     all_news_df = default_news_data()
-
-    remaining_news = all_news_df.to_dict(orient="records")
-
-    pretty_rss_feed = generate_default_rss_feed(user_id, remaining_news)
+    all_news = all_news_df.to_dict(orient="records")
+    
+    pretty_rss_feed = generate_default_rss_feed(user_id, all_news)
     
     # Store the user in the database
     users_collection.insert_one({
@@ -159,58 +202,63 @@ def welcome():
         "recommendations": [],
         "rss_feed_sorted": pretty_rss_feed,
         "rss_feed_unsorted": pretty_rss_feed
-    })
+   })
     
     # Generate the RSS feed URL for the user
     rss_url = url_for("generate_rss_feed", user_id=user_id, _external=True)
-   
+    
     # Render the welcome page with the custom RSS URL
     return render_template(
-        'welcomepg2.html',
+        'welcomepg.html',
         base_rss_url = rss_url
     )
 
 @app.route("/updaterss", methods=["GET"])
 def update_rss_feed():
-    users_collection = db.test_users3
     users = users_collection.find()
-    
     with app.app_context():
         for user in users:
             user_id = user["user_id"]
             
             # Check if the user exists in the database
-            user = users_collection.find_one({"user_id": user_id}, {"recommendations": 1})
+            user = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
             if not user:
                 return "Invalid user ID", 404
 
-            recommended_news_dict = user["recommendations"]
-            
-            if len(recommended_news_dict) > 0:
-                recommended_news_df = pd.DataFrame(recommended_news_dict)      
+            if user and "clicked_news" in user:
+            # Sort the clicked_news by timestamp and extract the news_id
+                sorted_news_ids = [
+                    news["news_id"] for news in sorted(user["clicked_news"], key=lambda x: x["timestamp"])
+                ]
 
-                # Generate both feeds
-                rss_sorted = generate_feed(user_id, recommended_news_df, sort_flag=True)
-                rss_unsorted = generate_feed(user_id, recommended_news_df, sort_flag=False)
+            if len(sorted_news_ids) > 0:
+                # Generate recommendations based on the tracked ID
+                recommended_ids = generate_unique_recommendations(user_id)
             else:
-                all_news_df = default_news_data()
-                remaining_news = all_news_df.to_dict(orient="records")
+                # Default to including all news items in no specific order
+                recommended_ids = []
 
-                rss_sorted = generate_default_rss_feed(user_id, remaining_news)
-                rss_unsorted = generate_default_rss_feed(user_id, remaining_news)
-                
+            # Fetch all news data and sort in descending order
+            all_news_df = default_news_data()
+
+            news_recs, remaining_news = prepare_base_feed(all_news_df, recommended_ids)
+
+            # Generate both feeds
+            rss_sorted = generate_feed(all_news_df, user_id, news_recs, remaining_news, sort_flag=True)
+            rss_unsorted = generate_feed(all_news_df, user_id, news_recs, remaining_news, sort_flag=False)
+
             rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
-                
+            
             users_collection.update_one(
                 {"user_id": user_id},
-                {"$set": {"recommendations": recommended_news_dict,
+                {"$set": {"recommendations": recommended_ids,
                         "last_recommendation_time": rec_time,
                         "rss_feed_sorted": rss_sorted,
                         "rss_feed_unsorted": rss_unsorted}
                 }
             )
         
-        return jsonify({"message": "RSS feed updated for all users"})
+        return jsonify({"message": "News recommendations updated for all users"})
 
 @app.route("/rss", methods=["GET"])
 def generate_rss_feed():
@@ -224,7 +272,7 @@ def generate_rss_feed():
     user = users_collection.find_one({"user_id": user_id})
     if not user:
         return jsonify({"error": "User ID not found"}), 404
-
+    
     if sort_flag:
         pretty_rss_feed = user["rss_feed_sorted"]
     else:
@@ -232,6 +280,7 @@ def generate_rss_feed():
 
     # Return the RSS feed content
     response = Response(pretty_rss_feed, content_type="application/rss+xml")
+    
     return response
 
 @app.route('/uat_recommendations', methods=['GET'])
@@ -243,26 +292,28 @@ def get_uat_recommendations():
 
     # Fetch recommendations from MongoDB
     user_data = users_collection.find_one({'user_id': user_id})
+    recommended_ids = user_data["recommendations"]
+    
+    clicked_titles = []
+    ordered_news = []
+
+    all_news_df = default_news_data()
+    news_title_map = dict(zip(all_news_df["_id"], all_news_df["Title"]))
 
     # Process clicked news
     if "clicked_news" in user_data:
-        clicked_titles = [
-            news["clicked_title"] for news in sorted(user_data["clicked_news"], key=lambda x: x["timestamp"])
+        clicked_ids = [
+            news["news_id"] for news in sorted(user_data["clicked_news"], key=lambda x: x["timestamp"])
         ]
-    else:
-        clicked_titles = []
-  
+        clicked_titles = [news_title_map[news_id] for news_id in clicked_ids if news_id in news_title_map]
+
     # Process recommendations
-    if "recommendations" in user_data:
-        recs_titles = [
-            news["Title"] for news in user_data["recommendations"]
-        ]
-    else:
-        recs_titles = []
+    if recommended_ids:
+        ordered_news = [news_title_map[news_id] for news_id in recommended_ids if news_id in news_title_map]
 
     return jsonify({
         "clicked_news": clicked_titles,
-        "recommended_news": recs_titles
+        "recommended_news": ordered_news
     })
 
 @app.route("/track", methods=["GET"])
@@ -274,14 +325,8 @@ def track():
     news_id = query_params.get("news_id", [None])[0]
 
     redirect_to = request.args.get("redirect", "true")  # Extract 'redirect' parameter
+    news_data = default_news_data().to_dict(orient="records")
     
-    dfdata = default_news_data()
-    combined_recs_df = recommended_news_data()
-    
-    dfs = [dfdata, combined_recs_df]
-    news_data_concat = pd.concat(dfs)
-    news_data = news_data_concat.to_dict(orient="records")
-
     # Validate parameters
     if redirect_to == "true" and news_id is not None:
         news_item = next((item for item in news_data if str(item["_id"]) == str(news_id)), None)
@@ -289,27 +334,20 @@ def track():
             return "News item not found", 404
 
         original_url = news_item["Link"]
-        original_title = news_item["Title"]
 
         # Log the click
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")        
-        
         users_collection.update_one(
         {"user_id": user_id},
         {"$push": {"clicked_news": {
-                    "news_id": news_id,
-                    "clicked_title": original_title,
-                    "timestamp": timestamp}
-                    }
-        })
+            "news_id": news_id, "timestamp": timestamp
+        }}}
+        )
 
         return redirect(original_url)
     
     return "Invalid tracking parameters", 400
 
 if __name__ == "__main__":
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(update_rss_feed, 'interval', minutes=50)
-    scheduler.start()
-
+    
     app.run(debug=False)
