@@ -172,7 +172,6 @@ def welcome():
 
 @app.route("/updaterss", methods=["GET"])
 def update_rss_feed():
-    users_collection = db.test_users3
     users = users_collection.find()
     
     with app.app_context():
