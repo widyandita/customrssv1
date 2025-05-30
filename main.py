@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify, request, url_for, redirect, render_template
+from flask import Flask, Response, make_response, jsonify, request, url_for, redirect, render_template
 import os
 from pymongo import MongoClient
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -230,7 +230,9 @@ def generate_rss_feed():
         pretty_rss_feed = user["rss_feed_unsorted"]
 
     # Return the RSS feed content
-    response = Response(pretty_rss_feed, content_type="application/rss+xml")
+    response = make_response(pretty_rss_feed)
+    response.headers['Content-Type'] = 'application/rss+xml'
+    response.headers['Last-Modified'] = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
     return response
 
 @app.route('/uat_recommendations', methods=['GET'])
