@@ -201,8 +201,40 @@ def generate_unique_recommendations(user_id):
 
     return filtereddf.to_dict(orient="records")
 
+@app.route("/")
+def welcome():
+    # Generate a new user ID
+    user_id = str(uuid.uuid4())
+
+    # Fetch all news data and sort in descending order
+    all_news_df = default_news_data()
+
+    remaining_news = all_news_df.to_dict(orient="records")
+
+    pretty_rss_feed = generate_default_rss_feed(user_id, remaining_news)
+    
+    # Store the user in the database
+    users_collection.insert_one({
+        "user_id": user_id,
+        "created_at": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        "clicked_news": [],
+        "last_recommendation_time": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        "recommendations": [],
+        "rss_feed_sorted": pretty_rss_feed,
+        "rss_feed_unsorted": pretty_rss_feed
+    })
+    
+    # Generate the RSS feed URL for the user
+    rss_url = url_for("generate_rss_feed", user_id=user_id, _external=True)
+   
+    # Render the welcome page with the custom RSS URL
+    return render_template(
+        'welcomepg2.html',
+        base_rss_url = rss_url
+    )
+
 @app.route("/updaterecs", methods=["GET"])
-def update_rss_feed():
+def update_recs():
     users = users_collection.find()
         
     recs_log = []
@@ -238,39 +270,7 @@ def update_rss_feed():
 
         recs_log.append(f"Sebanyak {len(recommended_news)} rekomendasi dihasilkan untuk user {user_id}")
     
-    return jsonify({recs_log})
-
-@app.route("/")
-def welcome():
-    # Generate a new user ID
-    user_id = str(uuid.uuid4())
-
-    # Fetch all news data and sort in descending order
-    all_news_df = default_news_data()
-
-    remaining_news = all_news_df.to_dict(orient="records")
-
-    pretty_rss_feed = generate_default_rss_feed(user_id, remaining_news)
-    
-    # Store the user in the database
-    users_collection.insert_one({
-        "user_id": user_id,
-        "created_at": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        "clicked_news": [],
-        "last_recommendation_time": datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        "recommendations": [],
-        "rss_feed_sorted": pretty_rss_feed,
-        "rss_feed_unsorted": pretty_rss_feed
-    })
-    
-    # Generate the RSS feed URL for the user
-    rss_url = url_for("generate_rss_feed", user_id=user_id, _external=True)
-   
-    # Render the welcome page with the custom RSS URL
-    return render_template(
-        'welcomepg2.html',
-        base_rss_url = rss_url
-    )
+    return jsonify({"message":recs_log})
 
 @app.route("/updaterss", methods=["GET"])
 def update_rss_feed():
