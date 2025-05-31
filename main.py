@@ -235,45 +235,86 @@ def welcome():
 
 @app.route("/updaterecs", methods=["GET"])
 def update_recs():
-    users = users_collection.find()
-        
-    recs_log = []
-    for user in users:
-        user_id = user["user_id"]
+    user_id = request.args.get("user_id")
+    
+    if not user_id:
+        return jsonify({"error": "User ID is required"}), 400    
 
+    # Check if the user exists in the database
+    user = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
+    if not user:
+        return "Invalid user ID", 404
+
+    if user and "clicked_news" in user:
+    # Sort the clicked_news by timestamp and extract the news_id
+        sorted_news_ids = [
+            news["news_id"] for news in sorted(user["clicked_news"], key=lambda x: x["timestamp"])
+        ]
+
+    if len(sorted_news_ids) > 0:
+        # Generate recommendations based on the tracked ID
+        recommended_news = generate_unique_recommendations(user_id)
+    else:
+        # Default to including all news items in no specific order
+        recommended_news = []
+
+    rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+        
+    users_collection.update_one(
+        {"user_id": user_id},
+        {"$set": {"recommendations": recommended_news,
+                "last_recommendation_time": rec_time}
+        }
+    )
+
+    message = f"Sebanyak {len(recommended_news)} rekomendasi dihasilkan untuk user {user_id}"
+
+    return jsonify({"message":message})
+
+@app.route("/updaterss", methods=["GET"])
+def update_rss_feed():
+    user_id = request.args.get("user_id")
+    
+    if not user_id:
+        return jsonify({"error": "User ID is required"}), 400    
+    
+    with app.app_context():
         # Check if the user exists in the database
-        user = users_collection.find_one({"user_id": user_id}, {"clicked_news": 1})
+        user = users_collection.find_one({"user_id": user_id}, {"recommendations": 1})
         if not user:
             return "Invalid user ID", 404
 
-        if user and "clicked_news" in user:
-        # Sort the clicked_news by timestamp and extract the news_id
-            sorted_news_ids = [
-                news["news_id"] for news in sorted(user["clicked_news"], key=lambda x: x["timestamp"])
-            ]
+        recommended_news_dict = user["recommendations"]
+        
+        if len(recommended_news_dict) > 0:
+            recommended_news_df = pd.DataFrame(recommended_news_dict)      
 
-        if len(sorted_news_ids) > 0:
-            # Generate recommendations based on the tracked ID
-            recommended_news = generate_unique_recommendations(user_id)
+            # Generate both feeds
+            rss_sorted = generate_feed(user_id, recommended_news_df, sort_flag=True)
+            rss_unsorted = generate_feed(user_id, recommended_news_df, sort_flag=False)
         else:
-            # Default to including all news items in no specific order
-            recommended_news = []
+            all_news_df = default_news_data()
+            remaining_news = all_news_df.to_dict(orient="records")
 
+            rss_sorted = generate_default_rss_feed(user_id, remaining_news)
+            rss_unsorted = generate_default_rss_feed(user_id, remaining_news)
+            
         rec_time = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
             
         users_collection.update_one(
             {"user_id": user_id},
-            {"$set": {"recommendations": recommended_news,
-                    "last_recommendation_time": rec_time}
+            {"$set": {"recommendations": recommended_news_dict,
+                    "last_recommendation_time": rec_time,
+                    "rss_feed_sorted": rss_sorted,
+                    "rss_feed_unsorted": rss_unsorted}
             }
         )
+        
+    message = f"RSS feed updated for user {user_id}"
+    return jsonify({"message": message})
 
-        recs_log.append(f"Sebanyak {len(recommended_news)} rekomendasi dihasilkan untuk user {user_id}")
-    
-    return jsonify({"message":recs_log})
-
-@app.route("/updaterss", methods=["GET"])
-def update_rss_feed():
+@app.route("/updateallrss", methods=["GET"])
+def update_all_rss_feed():
     users = users_collection.find()
     
     with app.app_context():
@@ -412,7 +453,7 @@ def track():
 
 if __name__ == "__main__":
     scheduler = BackgroundScheduler()
-    scheduler.add_job(update_rss_feed, 'interval', minutes=50)
+    scheduler.add_job(update_all_rss_feed, 'interval', minutes=120)
     scheduler.start()
 
     app.run(debug=False)
